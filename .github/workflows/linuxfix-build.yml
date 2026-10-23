@@ -1,5 +1,5 @@
 # Fork-only workflow: rebuilds the latest upstream release with the
-# fix/linux-user-writable-bin patch applied and publishes it as a
+# linuxfix branch (our Linux fixes) applied and publishes it as a
 # "linuxfix-<version>" release in this fork.
 #
 # Release tags deliberately don't start with "v" so upstream's release.yml
@@ -22,7 +22,7 @@ permissions:
 
 env:
   UPSTREAM_REPO: kil0bit-kb/scrcpy-gui
-  FIX_BRANCH: fix/linux-user-writable-bin
+  FIX_BRANCH: linuxfix
 
 jobs:
   build:
@@ -108,6 +108,6 @@ jobs:
           gh release delete "$REL" --cleanup-tag --yes 2>/dev/null || true
           gh release create "$REL" \
             --title "ScrcpyGUI ${TAG} + Linux fix" \
-            --notes "Upstream [${TAG}](https://github.com/$UPSTREAM_REPO/releases/tag/${TAG}) with \`$FIX_BRANCH\` ($(git rev-parse --short HEAD)) applied: scrcpy downloads/updates go to ~/.local/share instead of /usr/bin." \
+            --notes "Upstream [${TAG}](https://github.com/$UPSTREAM_REPO/releases/tag/${TAG}) with \`$FIX_BRANCH\` ($(git rev-parse --short HEAD)) applied: scrcpy downloads/updates go to ~/.local/share instead of /usr/bin, download progress works, and titlebar buttons work on Wayland (Tauri 2.12)." \
             src-tauri/target/release/bundle/deb/*.deb \
             src-tauri/target/release/bundle/appimage/*.AppImage
