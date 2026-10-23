@@ -2185,12 +2185,17 @@ pub async fn download_scrcpy(window: Window) -> Result<(), String> {
         window.emit("scrcpy-log", format!("[SYSTEM] Downloading: {} MB", total_size / 1024 / 1024)).unwrap();
 
         let mut downloaded: u64 = 0;
+        let mut last_percent: Option<u64> = None;
         while let Some(chunk) = download_resp.chunk().await.map_err(|e| e.to_string())? {
             file.write_all(&chunk).map_err(|e| format!("Failed to write chunk: {}", e))?;
             downloaded += chunk.len() as u64;
             if total_size > 0 {
                 let percent = (downloaded * 100) / total_size;
-                let _ = window.emit("download-progress", json!({ "percent": percent }));
+                if last_percent != Some(percent) {
+                    last_percent = Some(percent);
+                    // The frontend listens for progress as a "scrcpy-status" payload.
+                    let _ = window.emit("scrcpy-status", json!({ "type": "download-progress", "percent": percent }));
+                }
             }
         }
     }
