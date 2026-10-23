@@ -1,0 +1,109 @@
+# Fork-only workflow: rebuilds the latest upstream release with the
+# fix/linux-user-writable-bin patch applied and publishes it as a
+# "linuxfix-<version>" release in this fork.
+#
+# Release tags deliberately don't start with "v" so upstream's release.yml
+# (triggered on v* tags) never runs here.
+
+name: Linux fix build
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Rebuild even if the release already exists'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_REPO: kil0bit-kb/scrcpy-gui
+  FIX_BRANCH: fix/linux-user-writable-bin
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FIX_BRANCH }}
+          fetch-depth: 0
+
+      - name: Find latest upstream release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=$(gh release view --repo "$UPSTREAM_REPO" --json tagName -q .tagName)
+          REL="linuxfix-${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release=$REL" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream release: $TAG -> $REL"
+          if gh release view "$REL" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+             && [ "${{ inputs.force }}" != "true" ]; then
+            echo "$REL already exists, nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Rebase fix onto upstream release
+        if: steps.upstream.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.upstream.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/$UPSTREAM_REPO.git"
+          git fetch --tags upstream
+          if ! git rebase "$TAG"; then
+            git rebase --abort
+            echo "::error::$FIX_BRANCH does not apply cleanly on $TAG. Rebase it manually and push."
+            exit 1
+          fi
+          git log --oneline -n 3
+
+      - name: Setup Node
+        if: steps.upstream.outputs.skip != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust
+        if: steps.upstream.outputs.skip != 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        if: steps.upstream.outputs.skip != 'true'
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install Linux dependencies
+        if: steps.upstream.outputs.skip != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev
+
+      - name: Build
+        if: steps.upstream.outputs.skip != 'true'
+        run: |
+          npm ci
+          npx tauri build --bundles deb,appimage
+
+      - name: Publish release
+        if: steps.upstream.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.upstream.outputs.tag }}
+          REL: ${{ steps.upstream.outputs.release }}
+        run: |
+          gh release delete "$REL" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$REL" \
+            --title "ScrcpyGUI ${TAG} + Linux fix" \
+            --notes "Upstream [${TAG}](https://github.com/$UPSTREAM_REPO/releases/tag/${TAG}) with \`$FIX_BRANCH\` ($(git rev-parse --short HEAD)) applied: scrcpy downloads/updates go to ~/.local/share instead of /usr/bin." \
+            src-tauri/target/release/bundle/deb/*.deb \
+            src-tauri/target/release/bundle/appimage/*.AppImage
